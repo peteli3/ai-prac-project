@@ -1,10 +1,3 @@
-
-#   File name: progress.py
-#   Author: shichao-en from Github
-#   Date created: Unk date, 2014
-#   Python Version: 2.7
-#   External Dependencies: humanize
-
 import sys
 import time
 from humanize import naturalsize
@@ -12,7 +5,7 @@ from humanize import naturalsize
 START_TIME = None
 
 def progress(download_t, download_d, upload_t, upload_d):
-	""" 
+	"""
 		* Implemented by shichao-an's python_download_progress.py for pycurl *
 		Functionality: 	prints the live progress of download on the console
 		Precondition:	n/a, closure to be fed into pycurl.PROGRESSFUNCTION
@@ -39,4 +32,3 @@ def progress(download_t, download_d, upload_t, upload_d):
 	sys.stderr.write(p)
 	sys.stderr.flush()
 
-	

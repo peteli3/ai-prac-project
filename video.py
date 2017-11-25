@@ -1,11 +1,3 @@
-
-#   File name: vimeo.py
-#   Author: Peter Li
-#   Date created: 03/03/17
-#   Date last modified: 03/13/17
-#   Python Version: 2.7
-#   External Dependencies: pycurl, validators, crcmod.predefined
-
 # python standard libraries
 
 import sys, os
@@ -16,6 +8,7 @@ import progress as p
 import binascii
 import base64
 import hashlib
+import time
 from Queue import Queue
 from threading import Thread
 
@@ -26,6 +19,8 @@ import validators
 import crcmod.predefined
 
 MEGA_BYTE = 2 ** 20
+MAX_PARALLELISM = 2 ** 16
+DEFAULT_PARALLELISM = 2 ** 8
 
 #################################### v SCRIPT BODY v ####################################
 
@@ -264,6 +259,7 @@ def extract_from_url(target_url, num_parallel, chunk_size):
 	md5 = re.search('\nx-goog-hash: md5=(.*)\n', header_text).group(1)
 
 	# download parallel in chunks if allowed
+	start = time.time()
 	if accepts_byte_ranges:
 
 		# attempt parallel download first
@@ -280,6 +276,8 @@ def extract_from_url(target_url, num_parallel, chunk_size):
 	else:
 		print 'Download starting... happy waiting!'
 		file_name = download_whole(target_url)
+	end = time.time()
+	print '\ntime elapsed: %f' % (start - end)
 
 	# validate the download via hashed crc32c checksum
 	print '\nValidating download now...'
@@ -314,10 +312,10 @@ def main(argv):
 	# otherwise, set chunk_size and num_parallel, then download video
 	elif len(argv) == 2:
 		chunk_size = 5 * MEGA_BYTE
-		num_parallel = 25
+		num_parallel = DEFAULT_PARALLELISM
 	elif len(argv) == 4:
 		chunk_size = int(argv[2]) * MEGA_BYTE
-		num_parallel = min( int(argv[3]), 32 ) # limit num_parallel to 32
+		num_parallel = min( int(argv[3]), MAX_PARALLELISM )
 
 	extract_from_url(argv[1], num_parallel, chunk_size)
 
