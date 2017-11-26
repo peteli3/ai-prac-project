@@ -272,20 +272,30 @@ def download_whole(target_url):
 		c.setopt(c.TIMEOUT, SERIAL_TIMEOUT)
 
 		# try the download 3 times, if any fail, prompt user before trying again
-		for attempt in range(MAX_RETRIES):
+		attempt = 0
+		while attempt < MAX_RETRIES:
 
 			# attempt to download the file
 			try:
 				c.perform()
+
+			# if fail, try again when prompted
+			except Exception as e:
+				if raw_input('Download failed. Try again? (enter y to retry): ') == 'y':
+					attempt += 1
+					continue
+				else:
+					attempt = MAX_RETRIES
+
+			# download success, leave loop
+			else:
+				c.close()
 				break
 
-			# download failed, if no retry, delete corrupted file,
-			except Exception as e:
-				if attempt == 2 or raw_input('Download failed. Try again? (enter y to retry): ') != 'y':
-					print 'Download aborted.'
-					# os.remove('./' + write_to)    # uncomment this to delete file upon failure
-					break
-		c.close()
+		# if never reach break (success), abort download
+		else:
+			print 'Download aborted.'
+			# os.remove('./' + write_to)    # uncomment this to delete file upon failure
 
 	return write_to
 
