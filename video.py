@@ -1,26 +1,43 @@
+
 # python standard libraries
 
-import sys, os
+import os
+import sys
+import re
 import shutil
 import cStringIO
-import re
-import progress as p
 import binascii
 import base64
 import hashlib
 import time
+import threading
 from Queue import Queue
-from threading import Thread
 
-# external libraries
+# external libraries/modules
 
 import pycurl
 import validators
 import crcmod.predefined
+import progress as p
+
+# global constants
 
 MEGA_BYTE = 2 ** 20
 MAX_PARALLELISM = 2 ** 16
 DEFAULT_PARALLELISM = 2 ** 8
+
+SECS_PER_MIN = 60
+SERIAL_TIMEOUT = 30 * SECS_PER_MIN
+CHUNK_TIMEOUT = 5 * SECS_PER_MIN
+
+MAX_FILES_OPEN = 100
+MAX_RETRIES = 3
+
+# global sync primitives
+
+tempfiles_open = 0
+tempfiles_lock = threading.Lock()
+can_open_tempfiles = threading.Condition(tempfiles_lock)
 
 #################################### v SCRIPT BODY v ####################################
 
@@ -68,11 +85,9 @@ def validate_download(file_name, crc, md5):
 	binary_rep_md5 = binascii.unhexlify(hex_str_md5)
 	final_md5 = base64.b64encode(binary_rep_md5)
 
-	# if both checksums pass, file is good to go, else something happened
-	if final_checksum.strip() == crc.strip() and final_md5.strip() == md5.strip():
-		return True
-	else:
-		raise Exception('file corrupted')
+	# if either checksum failed, file is corrupted
+	if final_checksum.strip() != crc.strip() or final_md5.strip() != md5.strip():
+		raise Exception('File corrupted')
 
 
 def build_ranges_queue(file_size, chunk_size):
@@ -101,6 +116,30 @@ def build_ranges_queue(file_size, chunk_size):
 	return queue
 
 
+def inc_tempfiles_open():
+	"""
+		Functionality:  make sure we dont open more than MAX_FILES_OPEN tmp at a time
+	"""
+
+	global tempfiles_open, tempfiles_lock, can_open_tempfiles
+	with tempfiles_lock:
+		while tempfiles_open >= MAX_FILES_OPEN:
+			can_open_tempfiles.wait()
+		tempfiles_open += 1
+
+
+def dec_tempfiles_open():
+	"""
+		Functionality:  make sure we dont open more than MAX_FILES_OPEN tmp at a time
+	"""
+
+	global tempfiles_open, tempfiles_lock, can_open_tempfiles
+	with tempfiles_lock:
+		tempfiles_open -= 1
+		if (tempfiles_open < MAX_FILES_OPEN):
+			can_open_tempfiles.notify()
+
+
 def download_chunk(target_url, queue, temp_map, temp_dir, num_chunks):
 	"""
 		Functionality:  MULTIPROCESSING - the function body for each worker thread, will
@@ -114,35 +153,58 @@ def download_chunk(target_url, queue, temp_map, temp_dir, num_chunks):
 						- num_chunks is the number of total chunks to be downloaded
 		Returns:        a dictionary as {chunk_id : temp_file_name}
 	"""
+
 	while True:
 
 		# if chunks left on queue, start downloading chunk
 		if queue.qsize() > 0:
-
-			# extract info from queue
 			(chunk_id, dl_range) = queue.get()
-			chunk_name = 'output_tmp' + str(chunk_id)
-			chunk_path = os.path.join(temp_dir, chunk_name)
 
-			# progress tracker
-			back = '\b' * 30
-			progress = back + 'Downloading chunk ' + str(chunk_id + 1) + ' of ' + str(num_chunks)
-			sys.stdout.write(progress)
-			sys.stdout.flush()
+			# try to download chunk
+			for attempt in range(MAX_RETRIES):
+				try:
+					# extract info from queue
+					chunk_name = 'output_tmp' + str(chunk_id)
+					chunk_path = os.path.join(temp_dir, chunk_name)
 
-			with open(chunk_path, 'wb') as tmp:
-				# options: set url, write to file, byte-range, timeout after 2mins
-				c = pycurl.Curl()
-				c.setopt(c.URL, target_url)
-				c.setopt(c.WRITEDATA, tmp)
-				c.setopt(c.RANGE, dl_range)
-				c.setopt(c.TIMEOUT, 120)
-				c.perform()
-				c.close()
+					# progress tracker, ***************************************************** MAY NEED TO REVISIT THIS
+					back = '\b' * 30
+					progress = back + 'Downloading chunk ' + str(chunk_id + 1) + ' of ' + str(num_chunks)
+					sys.stdout.write(progress)
+					sys.stdout.flush()
 
-			# set hashmap, notify queue that task completed
-			temp_map[chunk_id] = chunk_path
-			queue.task_done()
+					inc_tempfiles_open()
+					with open(chunk_path, 'wb') as tmp:
+						# options: set url, write to file, byte-range, timeout after 2mins
+						c = pycurl.Curl()
+						c.setopt(c.URL, target_url)
+						c.setopt(c.WRITEDATA, tmp)
+						c.setopt(c.RANGE, dl_range)
+						c.setopt(c.TIMEOUT, CHUNK_TIMEOUT)
+						c.perform()
+						c.close()
+					dec_tempfiles_open()
+
+					# set hashmap, notify queue that task completed
+					temp_map[chunk_id] = chunk_path
+					queue.task_done()
+
+				# failed download chunk attempt, try again
+				except Exception as e:
+					continue
+
+				# chunk successfully downloaded, can break out now
+				else:
+					break
+
+			# failed 3 times, raise exception
+			else:
+				raise Exception('Could not download chunk %d' % chunk_id)
+
+
+		# no work left, break foreverloop -> end thread execution
+		else:
+			break
 
 
 def download_in_chunks(target_url, file_size, num_parallel, chunk_size):
@@ -171,7 +233,7 @@ def download_in_chunks(target_url, file_size, num_parallel, chunk_size):
 
 	# start up the threads, reap them when Queue has been fully processed
 	for i in range(num_parallel):
-		worker = Thread( target=download_chunk, args=(target_url, queue, temp_map, write_to_tmp, num_chunks) )
+		worker = threading.Thread( target=download_chunk, args=(target_url, queue, temp_map, write_to_tmp, num_chunks) )
 		worker.setDaemon(True)
 		worker.start()
 	queue.join()
@@ -182,7 +244,8 @@ def download_in_chunks(target_url, file_size, num_parallel, chunk_size):
 		# take each ordered chunk, write to file
 		for i in range(int(num_chunks)):
 			with open(temp_map[i], 'rb') as write_from:
-				file.write( write_from.read() )
+				contents = write_from.read()
+				file.write(contents)
 
 	# delete all temps
 	shutil.rmtree(write_to_tmp)
@@ -207,10 +270,10 @@ def download_whole(target_url):
 		c.setopt(c.WRITEDATA, file)
 		c.setopt(c.NOPROGRESS, 0)
 		c.setopt(c.PROGRESSFUNCTION, p.progress)
-		c.setopt(c.TIMEOUT, 6000)
+		c.setopt(c.TIMEOUT, SERIAL_TIMEOUT)
 
 		# try the download 3 times, if any fail, prompt user before trying again
-		for i in range(3):
+		for attempt in range(MAX_RETRIES):
 
 			# attempt to download the file
 			try:
@@ -219,7 +282,7 @@ def download_whole(target_url):
 
 			# download failed, if no retry, delete corrupted file,
 			except Exception as e:
-				if i == 2 or raw_input('Download failed. Try again? (enter y to retry): ') != 'y':
+				if attempt == 2 or raw_input('Download failed. Try again? (enter y to retry): ') != 'y':
 					print 'Download aborted.'
 					# os.remove('./' + write_to)    # uncomment this to delete file upon failure
 					break
@@ -259,7 +322,6 @@ def extract_from_url(target_url, num_parallel, chunk_size):
 	md5 = re.search('\nx-goog-hash: md5=(.*)\n', header_text).group(1)
 
 	# download parallel in chunks if allowed
-	start = time.time()
 	if accepts_byte_ranges:
 
 		# attempt parallel download first
@@ -276,14 +338,12 @@ def extract_from_url(target_url, num_parallel, chunk_size):
 	else:
 		print 'Download starting... happy waiting!'
 		file_name = download_whole(target_url)
-	end = time.time()
-	print '\ntime elapsed: %f' % (start - end)
 
 	# validate the download via hashed crc32c checksum
 	print '\nValidating download now...'
 	try:
-		if validate_download(file_name, crc, md5):
-			print 'Download successful! %s is intact and ready to view.' % file_name
+		validate_download(file_name, crc, md5)
+		print 'Download successful! %s is intact and ready to view.' % file_name
 	except:
 		print 'Download corrupted. Try again later.'
 
@@ -317,7 +377,10 @@ def main(argv):
 		chunk_size = int(argv[2]) * MEGA_BYTE
 		num_parallel = min( int(argv[3]), MAX_PARALLELISM )
 
+	start = time.time()
 	extract_from_url(argv[1], num_parallel, chunk_size)
+	end = time.time()
+	print '\ntime elapsed: %f' % (end - start)
 
 #################################### ^ SCRIPT BODY ^ ####################################
 
