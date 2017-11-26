@@ -102,7 +102,8 @@ def build_ranges_queue(file_size, chunk_size):
 
 	# initialize sync-safe Queue, track start/end, track chunk_id for later
 	queue = Queue()
-	start = chunk_id = 0
+	start = 0
+	chunk_id = 0
 	end = chunk_size
 
 	# add (chunk_id, range) tuples to the FIFO Queue
@@ -167,15 +168,15 @@ def download_chunk(target_url, queue, temp_map, temp_dir, num_chunks):
 					chunk_name = 'output_tmp' + str(chunk_id)
 					chunk_path = os.path.join(temp_dir, chunk_name)
 
-					# progress tracker, ***************************************************** MAY NEED TO REVISIT THIS
+					# progress tracker, ***** MAY NEED TO REVISIT THIS
 					back = '\b' * 30
 					progress = back + 'Downloading chunk ' + str(chunk_id + 1) + ' of ' + str(num_chunks)
 					sys.stdout.write(progress)
 					sys.stdout.flush()
 
+					# write to temp file if < 100 open already
 					inc_tempfiles_open()
 					with open(chunk_path, 'wb') as tmp:
-						# options: set url, write to file, byte-range, timeout after 2mins
 						c = pycurl.Curl()
 						c.setopt(c.URL, target_url)
 						c.setopt(c.WRITEDATA, tmp)
@@ -197,10 +198,9 @@ def download_chunk(target_url, queue, temp_map, temp_dir, num_chunks):
 				else:
 					break
 
-			# failed 3 times, raise exception
+			# if we don't break from loop, then chunk download failed 3x
 			else:
 				raise Exception('Could not download chunk %d' % chunk_id)
-
 
 		# no work left, break foreverloop -> end thread execution
 		else:
@@ -265,7 +265,6 @@ def download_whole(target_url):
 	write_to = target_url.split('/')[-1]
 
 	with open(write_to, 'wb') as file:
-		# options: set url, write to file, show progress bar, timeout after 10mins
 		c.setopt(c.URL, target_url)
 		c.setopt(c.WRITEDATA, file)
 		c.setopt(c.NOPROGRESS, 0)
@@ -303,11 +302,11 @@ def extract_from_url(target_url, num_parallel, chunk_size):
 		Returns:        n/a
 	"""
 
-	# get file size to figure out optimal number of concurrent chunks
+	# get file size to figure out number of concurrent chunks
 	c = pycurl.Curl()
 	header = cStringIO.StringIO()
 
-	# set options, retrieve content length
+	# retrieve content length
 	c.setopt(c.URL, target_url)
 	c.setopt(c.HEADERFUNCTION, header.write)
 	c.setopt(c.NOBODY, 1)
