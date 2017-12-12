@@ -390,7 +390,8 @@ def main(argv):
 	extract_from_url(argv[1], num_parallel, chunk_size)
 	end = time.time()
 	print '\ntime elapsed: %f' % (end - start)
-
+	return end - start
+	
 #################################### ^ SCRIPT BODY ^ ####################################
 
 
