@@ -11,6 +11,7 @@ import base64
 import hashlib
 import time
 import threading
+import warnings
 from Queue import Queue
 
 # external libraries/modules
@@ -30,7 +31,7 @@ SECS_PER_MIN = 60
 SERIAL_TIMEOUT = 30 * SECS_PER_MIN
 CHUNK_TIMEOUT = 5 * SECS_PER_MIN
 
-MAX_FILES_OPEN = 100
+MAX_FILES_OPEN = 100 # THIS MAY NEED TO CHANGE BASED ON YOUR COMPUTER
 MAX_RETRIES = 3
 
 # global sync primitives
@@ -174,7 +175,7 @@ def download_chunk(target_url, queue, temp_map, temp_dir, num_chunks):
 					sys.stdout.write(progress)
 					sys.stdout.flush()
 
-					# write to temp file if < 100 open already
+					# control the amount of tempfiles open
 					inc_tempfiles_open()
 					with open(chunk_path, 'wb') as tmp:
 						c = pycurl.Curl()
@@ -386,6 +387,7 @@ def main(argv):
 		chunk_size = int(argv[2]) * MEGA_BYTE
 		num_parallel = min( int(argv[3]), MAX_PARALLELISM )
 
+	warnings.warn('This script opens a large amount of files, change constants in script if error arises.')
 	start = time.time()
 	extract_from_url(argv[1], num_parallel, chunk_size)
 	end = time.time()
