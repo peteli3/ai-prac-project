@@ -64,17 +64,25 @@ def fit_and_plot(result):
 
 	x_new = np.linspace(1, max(result.keys()), len(result))
 	y_new = function(x_new)
+	error = 0.0
+	for t, v in result.items():
+		error += (function(t) - v) ** 2
+	print('original plot curve error ' + str(error))
 
-	# s = interpolate.InterpolatedUnivariateSpline(result.keys(), result.values())
-	# x_new = np.linspace(1, max(result.keys()), len(result))
-	# y_new = s(x_new)
 
 	# f = interpolate.interp1d(result.keys(), result.values(), kind='cubic')
 	# x_new = np.linspace(1, max(result.keys()), len(result))
 	# y_new = f(x_new)
+	# error = 0.0
+	# print(y_new)
+	# for i, v in enumerate(result.values()):
+	# 	print(v, y_new[i])
+	# 	error += (v - y_new[i]) ** 2
+	# print(error)
+
 	plt.xlabel('# Threads (theta)')
 	plt.ylabel('Runtime (sec)')
-	plt.title('Dataset averaged over 5 runs')
+	plt.title('Polynomial fit over 5 runs averaged')
 
 	plt.plot(result.keys(), result.values(), 'o', x_new, y_new)
 	plt.show()
@@ -94,9 +102,9 @@ def plot_curves(function, filename):
 		y_new = function(x_new) - 15
 		values = [x[i] for x in data.values()]
 		error = 0.0
-		for i in range(len(y_new)):
-			error += (y_new[i] - values[i]) ** 2
-		print(error)
+		for j, t in enumerate(data.keys()):
+			error += (function(t) - 15 - values[j]) ** 2
+		print('plot ' + str(i) + ' ' + str(error))
 		plt.xlabel('# Threads (theta)')
 		plt.ylabel('Runtime (sec)')
 		plt.plot(data.keys(), values, 'o', x_new, y_new)
@@ -109,12 +117,11 @@ def gradient_desc(df):
 	previous_step_size = cur_x
 	num_iterations = 0
 
-	while previous_step_size > precision:
+	while previous_step_size > precision and num_iterations < 10000:
 	    prev_x = cur_x
 	    cur_x += -gamma * df(prev_x)
 	    previous_step_size = abs(cur_x - prev_x)
 	    num_iterations += 1
-	print(num_iterations)
 
 	print("The local minimum occurs at %f" % cur_x)
 
